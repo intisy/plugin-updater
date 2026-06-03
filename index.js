@@ -2,10 +2,16 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+let EARLY_LAUNCH_CONFIG_DIR = null;
+
 function getReposDir() {
-  const homedir = require('os').homedir();
-  const isCC = process.env.CC_LAUNCHER === "1";
-  return path.join(homedir, ".config", isCC ? "claude" : "opencode", "repos");
+  if (EARLY_LAUNCH_CONFIG_DIR) {
+    return path.join(EARLY_LAUNCH_CONFIG_DIR, "repos");
+  }
+  
+  // Fallback: guess based on argv if not set via earlyLaunch or input
+  const isClaude = process.argv.join(' ').includes('claude');
+  return path.join(require('os').homedir(), ".config", isClaude ? "claude" : "opencode", "repos");
 }
 
 function executeGit(command, cwd) {
@@ -18,17 +24,18 @@ function executeGit(command, cwd) {
   }
 }
 
-module.exports = {
+const updaterAPI = {
   name: "plugin-updater",
 
-  /**
-   * Called by the launcher (OpenCode/Claude Code) to sync a specific plugin
-   */
+  earlyLaunch: function(configDir) {
+    EARLY_LAUNCH_CONFIG_DIR = configDir;
+    global.__PLUGIN_UPDATER_HANDLED_BY_HUB__ = true;
+  },
+
   updatePlugin: function(pluginName, gitUrl, branch = null, commitHash = null) {
     const REPOS_DIR = getReposDir();
     const targetDir = path.join(REPOS_DIR, pluginName);
     
-    // 1. Ensure directory exists and clone or pull
     if (!fs.existsSync(targetDir)) {
       if (!fs.existsSync(REPOS_DIR)) fs.mkdirSync(REPOS_DIR, { recursive: true });
       const branchFlag = branch ? `--branch ${branch}` : "";
@@ -46,34 +53,24 @@ module.exports = {
       }
       executeGit("git submodule update --init --recursive", targetDir);
     }
-
     return true;
   },
 
-  /**
-   * Called to deploy the compiled output to the execution directory
-   */
   deployToExecutionDir: function(pluginName, executionPath) {
     const REPOS_DIR = getReposDir();
     const sourceDir = path.join(REPOS_DIR, pluginName);
     if (!fs.existsSync(sourceDir)) return false;
 
-    // Build if package.json exists
     if (fs.existsSync(path.join(sourceDir, "package.json"))) {
       try {
         execSync("npm install", { cwd: sourceDir, stdio: "ignore" });
         execSync("npm run build", { cwd: sourceDir, stdio: "ignore" });
-      } catch (e) {
-        // Fallback or ignore if no build step
-      }
+      } catch (e) {}
     }
 
-    // Determine deployment source (prefer dist, fallback to root)
     const distPath = path.join(sourceDir, "dist");
     const deploySource = fs.existsSync(distPath) ? distPath : sourceDir;
 
-    // Create a specific folder for this plugin inside the execution path
-    // UNLESS it's the core-hub, which gets deployed flat so the bin wrapper can find it
     const pluginExecutionPath = (pluginName === "core-hub") 
         ? executionPath 
         : path.join(executionPath, pluginName);
@@ -83,7 +80,6 @@ module.exports = {
     }
 
     try {
-      // Platform agnostic copy (using Node fs)
       fs.cpSync(deploySource, pluginExecutionPath, { recursive: true, force: true });
       return true;
     } catch (e) {
@@ -99,14 +95,13 @@ module.exports = {
     if (fs.existsSync(targetDir)) {
       try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch (e) {}
     }
-    return null; // Return null for success
+    return null;
   },
 
   disable: function(plugin) {
-    // Just delete the deployed folder, the hub will update plugins.json
     try {
-      const isCC = process.env.CC_LAUNCHER === "1";
-      const configDir = path.join(require('os').homedir(), ".config", isCC ? "claude" : "opencode");
+      // Use EARLY_LAUNCH_CONFIG_DIR if available, else fallback
+      const configDir = EARLY_LAUNCH_CONFIG_DIR || path.dirname(getReposDir());
       const pluginExecutionPath = path.join(configDir, "plugin", plugin.name);
       if (fs.existsSync(pluginExecutionPath)) {
         fs.rmSync(pluginExecutionPath, { recursive: true, force: true });
@@ -123,13 +118,44 @@ module.exports = {
     }
   },
 
-  /**
-   * Specific logic to install/update the launcher itself
-   */
   installLauncher: function() {
-    // Logic to install opencode-hub / claude-hub if they are missing
     this.updatePlugin("core-hub", "https://github.com/intisy/core-hub.git");
     this.updatePlugin("opencode-hub", "https://github.com/intisy/opencode-hub.git");
     this.updatePlugin("claude-hub", "https://github.com/intisy/claude-hub.git");
   }
 };
+
+// Main Plugin Entry Point for OpenCode/Claude Code
+const pluginUpdaterEntry = async function(input) {
+  // If not managed by the hub, run fallback updates!
+  if (!global.__PLUGIN_UPDATER_HANDLED_BY_HUB__) {
+    const configDir = (input && input.configDir) ? input.configDir : path.dirname(getReposDir());
+    updaterAPI.earlyLaunch(configDir);
+
+    updaterAPI.installLauncher();
+
+    const pluginsJsonPath = path.join(configDir, "config", "plugins.json");
+    if (fs.existsSync(pluginsJsonPath)) {
+      try {
+        const plugins = JSON.parse(fs.readFileSync(pluginsJsonPath, "utf-8"));
+        for (const plugin of plugins) {
+          if (plugin.url && plugin.enabled !== false && plugin.type !== "npm") {
+            const branch = plugin.branch || null;
+            const commit = plugin.commit || null;
+            updaterAPI.updatePlugin(plugin.name, plugin.url, branch, commit);
+            updaterAPI.deployToExecutionDir(plugin.name, path.join(configDir, "plugin"));
+          }
+        }
+      } catch (e) {
+        console.error("Failed to parse plugins.json", e);
+      }
+    }
+  }
+
+  return {}; // Return standard hooks object
+};
+
+// Attach API to the exported function
+Object.assign(pluginUpdaterEntry, updaterAPI);
+
+module.exports = pluginUpdaterEntry;
