@@ -209,14 +209,8 @@ const pluginUpdaterEntry = async function(input) {
   return {};
 };
 
-module.exports = {
-  activate: async function() { return await pluginUpdaterEntry(); },
-  earlyLaunch: updaterAPI.earlyLaunch,
-  updatePlugin: updaterAPI.updatePlugin,
-  deployToExecutionDir: updaterAPI.deployToExecutionDir,
-  rebuild: updaterAPI.rebuild,
-  downgrade: updaterAPI.downgrade,
-  disable: updaterAPI.disable,
-  uninstall: updaterAPI.uninstall,
-  default: pluginUpdaterEntry
-};
+const apiMethods = { ...updaterAPI };
+delete apiMethods.name;
+Object.assign(pluginUpdaterEntry, apiMethods);
+
+module.exports = pluginUpdaterEntry;
