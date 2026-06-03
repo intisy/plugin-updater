@@ -2,13 +2,18 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const REPOS_DIR = path.join(require('os').homedir(), '.config', 'github');
+function getReposDir() {
+  const homedir = require('os').homedir();
+  const isCC = process.env.CC_LAUNCHER === "1";
+  return path.join(homedir, ".config", isCC ? "claude" : "opencode", "repos");
+}
 
-function executeGit(cmd, dir) {
+function executeGit(command, cwd) {
   try {
-    return execSync(cmd, { cwd: dir, timeout: 60000, stdio: "ignore" });
+    execSync(command, { cwd, stdio: "ignore" });
+    return true;
   } catch (e) {
-    console.error(`[Updater] Git command failed: ${cmd} in ${dir}`);
+    console.error(`[Updater] Git error: ${e.message}`);
     return false;
   }
 }
@@ -20,6 +25,7 @@ module.exports = {
    * Called by the launcher (OpenCode/Claude Code) to sync a specific plugin
    */
   updatePlugin: function(pluginName, gitUrl, branch = null, commitHash = null) {
+    const REPOS_DIR = getReposDir();
     const targetDir = path.join(REPOS_DIR, pluginName);
     
     // 1. Ensure directory exists and clone or pull
@@ -48,6 +54,7 @@ module.exports = {
    * Called to deploy the compiled output to the execution directory
    */
   deployToExecutionDir: function(pluginName, executionPath) {
+    const REPOS_DIR = getReposDir();
     const sourceDir = path.join(REPOS_DIR, pluginName);
     if (!fs.existsSync(sourceDir)) return false;
 
@@ -66,7 +73,11 @@ module.exports = {
     const deploySource = fs.existsSync(distPath) ? distPath : sourceDir;
 
     // Create a specific folder for this plugin inside the execution path
-    const pluginExecutionPath = path.join(executionPath, pluginName);
+    // UNLESS it's the core-hub, which gets deployed flat so the bin wrapper can find it
+    const pluginExecutionPath = (pluginName === "core-hub") 
+        ? executionPath 
+        : path.join(executionPath, pluginName);
+
     if (!fs.existsSync(pluginExecutionPath)) {
       fs.mkdirSync(pluginExecutionPath, { recursive: true });
     }
@@ -82,6 +93,7 @@ module.exports = {
   },
 
   rebuild: function(pluginObjOrName) {
+    const REPOS_DIR = getReposDir();
     const pluginName = typeof pluginObjOrName === 'string' ? pluginObjOrName : pluginObjOrName.name;
     const targetDir = path.join(REPOS_DIR, pluginName);
     if (fs.existsSync(targetDir)) {
@@ -104,6 +116,7 @@ module.exports = {
 
   uninstall: function(plugin) {
     this.disable(plugin);
+    const REPOS_DIR = getReposDir();
     const targetDir = path.join(REPOS_DIR, plugin.name);
     if (fs.existsSync(targetDir)) {
       try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch (e) {}
