@@ -9,5 +9,5 @@ Reliable core update mechanism for all OpenCode and Claude Code plugins.
 - [ ] **Launch Detection (Early Launch)**: 
   - The updater exports an `earlyLaunch(configDir)` function. 
   - Hub plugins (opencode-hub / claude-hub) MUST detect the updater and call `earlyLaunch` before OpenCode invokes it, deferring update flow management to the Hub.
-  - If launched directly via the normal application command (no hub / optional dependency), the updater executes its update routine automatically and MUST install the Hub.
+  - If launched directly via the normal application command (no hub / optional dependency), the updater executes its update routine automatically and MUST NOT install the Hub, as the Hub is strictly optional.
   - Path resolution relies on the `configDir` passed by `earlyLaunch` or inferred from `process.argv`/input, NEVER relying on static environment variables like `CC_LAUNCHER`.
