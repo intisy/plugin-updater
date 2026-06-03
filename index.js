@@ -1,4 +1,4 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
@@ -118,27 +118,6 @@ const updaterAPI = {
     if (fs.existsSync(targetDir)) {
       try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch (e) {}
     }
-  },
-
-  ensureHubInstalled: function(configDir) {
-    const isClaude = configDir.includes("claude");
-    const hubName = isClaude ? "claude-hub" : "opencode-hub";
-    const hubUrl = `https://github.com/intisy/${hubName}.git`;
-    
-    const pluginsJsonPath = path.join(configDir, "config", "plugins.json");
-    if (!fs.existsSync(path.dirname(pluginsJsonPath))) {
-      fs.mkdirSync(path.dirname(pluginsJsonPath), { recursive: true });
-    }
-
-    let plugins = [];
-    if (fs.existsSync(pluginsJsonPath)) {
-      try { plugins = JSON.parse(fs.readFileSync(pluginsJsonPath, "utf-8")); } catch (e) {}
-    }
-
-    if (!plugins.some(p => p.name === hubName)) {
-      plugins.push({ name: hubName, url: hubUrl, autoUpdate: true, enabled: true });
-      fs.writeFileSync(pluginsJsonPath, JSON.stringify(plugins, null, 2), "utf-8");
-    }
   }
 };
 
@@ -146,7 +125,6 @@ const pluginUpdaterEntry = async function(input) {
   if (!global.__PLUGIN_UPDATER_HANDLED_BY_HUB__) {
     const configDir = (input && input.configDir) ? input.configDir : path.dirname(getReposDir());
     updaterAPI.earlyLaunch(configDir);
-    updaterAPI.ensureHubInstalled(configDir);
 
     const pluginsJsonPath = path.join(configDir, "config", "plugins.json");
     if (fs.existsSync(pluginsJsonPath)) {
