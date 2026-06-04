@@ -58,8 +58,6 @@ function executeGit(command, cwd) {
 }
 
 const updaterAPI = {
-  name: "plugin-updater",
-
   earlyLaunch: function(configDir) {
     EARLY_LAUNCH_CONFIG_DIR = configDir;
     global.__PLUGIN_UPDATER_HANDLED_BY_HUB__ = true;
@@ -176,14 +174,19 @@ const updaterAPI = {
   }
 };
 
-const pluginUpdaterEntry = async function(input) {
-  const configDir = (input && input.configDir) ? input.configDir : path.dirname(getReposDir());
+// OpenCode plugin server function — called by opencode with plugin input context
+const serverPlugin = async function(input) {
+  const configDir = (input && input.directory)
+    ? path.dirname(input.directory)
+    : path.dirname(getReposDir());
 
   // 1. GUARANTEE BASE DIRECTORIES EXIST ON LAUNCH
   const reposDir = path.join(configDir, "repos");
   const pluginsDir = path.join(configDir, "plugin");
   if (!fs.existsSync(reposDir)) fs.mkdirSync(reposDir, { recursive: true });
   if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
+
+  writeLog(`plugin-updater activated. configDir=${configDir}`);
 
   if (!global.__PLUGIN_UPDATER_HANDLED_BY_HUB__) {
     updaterAPI.earlyLaunch(configDir);
@@ -205,15 +208,19 @@ const pluginUpdaterEntry = async function(input) {
       }
     }
   }
+
+  // Return hooks object (can be empty — opencode expects this shape)
   return {};
 };
 
-// Attach API methods to the entry function (skip 'name' — conflicts with Function.name)
-for (const [key, value] of Object.entries(updaterAPI)) {
-  if (key !== 'name') {
-    pluginUpdaterEntry[key] = value;
-  }
-}
-pluginUpdaterEntry.pluginName = updaterAPI.name;
+// Expose updaterAPI on serverPlugin for hub access: import('plugin-updater').then(m => m.default.server.earlyLaunch(...))
+Object.keys(updaterAPI).forEach(key => {
+  serverPlugin[key] = updaterAPI[key];
+});
 
-export default pluginUpdaterEntry;
+// OpenCode V1 plugin contract: export default { id, server }
+// opencode calls mod.default.server(input) to initialize the plugin
+export default {
+  id: "plugin-updater",
+  server: serverPlugin
+};
