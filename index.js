@@ -11,7 +11,7 @@ function getAppConfigDir(appName) {
     return EARLY_LAUNCH_CONFIG_DIR;
   }
   const home = os.homedir();
-  const directPath = path.join(home, `.${appName}`);
+  const directPath = path.join(home, . + appName);
   const configPath = path.join(home, ".config", appName);
   return fs.existsSync(directPath) ? directPath : configPath;
 }
@@ -29,9 +29,9 @@ function writeLog(message, isError = false) {
       fs.mkdirSync(logsDir, { recursive: true });
     }
 
-    const logFile = path.join(logsDir, `updater-${START_TIME}.log`);
+    const logFile = path.join(logsDir, updater- + START_TIME + .log);
     const prefix = isError ? "[ERROR]" : "[INFO]";
-    const logMsg = `[${date.toISOString()}] ${prefix} ${message}\n`;
+    const logMsg = [ + date.toISOString() + ]  + prefix +   + message + \n;
 
     fs.appendFileSync(logFile, logMsg);
   } catch (e) {
@@ -47,7 +47,7 @@ function getReposDir() {
 }
 
 function executeGit(command, cwd) {
-  writeLog(`Executing git: ${command} in ${cwd}`);
+  writeLog(Executing git:  + command +  in  + cwd);
   try {
     execSync(command, { 
       cwd, 
@@ -57,7 +57,7 @@ function executeGit(command, cwd) {
     return true;
   } catch (error) {
     const stderr = error.stderr ? error.stderr.toString().trim() : '';
-    writeLog(`Git error in ${cwd}: ${error.message} | stderr: ${stderr}`, true);
+    writeLog(Git error in  + cwd + :  + error.message +  | stderr:  + stderr, true);
     return false;
   }
 }
@@ -65,54 +65,81 @@ function executeGit(command, cwd) {
 function updatePlugin(pluginName, gitUrl, branch, commitHash) {
   const reposDir = getReposDir();
   const targetDir = path.join(reposDir, pluginName);
+  let didChange = false;
 
   if (!fs.existsSync(targetDir)) {
     if (!fs.existsSync(reposDir)) fs.mkdirSync(reposDir, { recursive: true });
-    const branchFlag = branch ? `--branch ${branch}` : "";
-    executeGit(`git clone --recurse-submodules ${branchFlag} ${gitUrl} ${pluginName}`, reposDir);
+    const branchFlag = branch ? --branch  + branch : "";
+    executeGit(git clone --recurse-submodules  + branchFlag +   + gitUrl +   + pluginName, reposDir);
+    didChange = true;
   } else {
     executeGit("git fetch origin", targetDir);
+    
+    let beforeHash = "";
+    try { beforeHash = execSync("git rev-parse HEAD", { cwd: targetDir }).toString().trim(); } catch(e) {}
+
     if (commitHash) {
-      executeGit(`git checkout ${commitHash}`, targetDir);
+      executeGit(git checkout  + commitHash, targetDir);
     } else if (branch) {
-      executeGit(`git checkout ${branch}`, targetDir);
-      executeGit(`git pull --ff-only origin ${branch}`, targetDir);
+      executeGit(git checkout  + branch, targetDir);
+      executeGit(git pull --ff-only origin  + branch, targetDir);
     } else {
       executeGit("git checkout main || git checkout master", targetDir);
       executeGit("git pull --ff-only", targetDir);
     }
     executeGit("git submodule update --init --recursive", targetDir);
+    
+    let afterHash = "";
+    try { afterHash = execSync("git rev-parse HEAD", { cwd: targetDir }).toString().trim(); } catch(e) {}
+    
+    if (beforeHash !== afterHash) {
+        didChange = true;
+    }
   }
-  return true;
+  return { success: true, changed: didChange };
 }
 
-function deployToExecutionDir(pluginName, executionPath) {
+function deployToExecutionDir(pluginName, executionPath, changed) {
   const sourceDir = path.join(getReposDir(), pluginName);
   if (!fs.existsSync(sourceDir)) return false;
 
   const packageJsonPath = path.join(sourceDir, "package.json");
   let entryFile = "index.js";
+  const pluginExecutionFile = path.join(executionPath, pluginName + .js);
 
+  // Fast path: if repo didn't change and the deployed plugin already exists, skip install/build
+  if (!changed && fs.existsSync(pluginExecutionFile)) {
+     writeLog(Skipping install/build for  + pluginName +  (no changes detected and deployed file exists));
+  } else {
+      if (fs.existsSync(packageJsonPath)) {
+        try {
+          writeLog(Running npm install for  + pluginName);
+          execSync("npm install", { cwd: sourceDir, stdio: "ignore" });
+          writeLog(Finished npm install for  + pluginName);
+
+          const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+          if (pkg.main) {
+            entryFile = pkg.main;
+          }
+
+          if (pkg.scripts && pkg.scripts.build) {
+            execSync("npm run build", { cwd: sourceDir, stdio: "ignore" });
+            writeLog(Finished npm run build for  + pluginName);
+          } else {
+            writeLog(Skipped npm run build for  + pluginName +  (no build script found));
+          }
+        } catch (error) {
+          writeLog(Build/Install failed for  + pluginName + :  + error.message, true);
+        }
+      }
+  }
+
+  // Always determine correct entry file even on skip, in case we need to copy
   if (fs.existsSync(packageJsonPath)) {
-    try {
-      writeLog(`Running npm install for ${pluginName}`);
-      execSync("npm install", { cwd: sourceDir, stdio: "ignore" });
-      writeLog(`Finished npm install for ${pluginName}`);
-
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-      if (pkg.main) {
-        entryFile = pkg.main;
-      }
-
-      if (pkg.scripts && pkg.scripts.build) {
-        execSync("npm run build", { cwd: sourceDir, stdio: "ignore" });
-        writeLog(`Finished npm run build for ${pluginName}`);
-      } else {
-        writeLog(`Skipped npm run build for ${pluginName} (no build script found)`);
-      }
-    } catch (error) {
-      writeLog(`Build/Install failed for ${pluginName}: ${error.message}`, true);
-    }
+     try {
+       const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+       if (pkg.main) entryFile = pkg.main;
+     } catch(e) {}
   }
 
   const distPath = path.join(sourceDir, "dist");
@@ -124,104 +151,67 @@ function deployToExecutionDir(pluginName, executionPath) {
     deploySource = path.join(distPath, "index.js");
   }
 
-  const pluginExecutionFile = path.join(executionPath, `${pluginName}.js`);
-
   if (!fs.existsSync(executionPath)) {
     fs.mkdirSync(executionPath, { recursive: true });
   }
 
   try {
-    writeLog(`Running copy for ${pluginName}`);
+    writeLog(Running copy for  + pluginName);
     fs.copyFileSync(deploySource, pluginExecutionFile);
-    writeLog(`Finished copy for ${pluginName}`);
+    writeLog(Finished copy for  + pluginName);
   } catch (e) {
-    writeLog(`Copy failed for ${pluginName}: ${e.message}`, true);
+    writeLog(Copy failed for  + pluginName + :  + e.message, true);
   }
   return true;
 }
 
 async function pluginUpdaterEntry(input) {
   const isClaude = process.argv.join(' ').includes('claude');
-  const configDir = getAppConfigDir(isClaude ? "claude" : "opencode");
+  const appName = isClaude ? "claude" : "opencode";
+  const configDir = getAppConfigDir(appName);
 
   const reposDir = path.join(configDir, "repos");
   const pluginsDir = path.join(configDir, "plugin");
-  if (!fs.existsSync(reposDir)) fs.mkdirSync(reposDir, { recursive: true });
-  if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
 
-  writeLog(`plugin-updater activated. configDir=${configDir}`);
+  writeLog("Starting plugin updater for " + appName);
 
-  if (!global.__PLUGIN_UPDATER_HANDLED_BY_HUB__) {
-    EARLY_LAUNCH_CONFIG_DIR = configDir;
-    global.__PLUGIN_UPDATER_HANDLED_BY_HUB__ = true;
-
-    const pluginsJsonPath = path.join(configDir, "config", "plugins.json");
-    if (fs.existsSync(pluginsJsonPath)) {
-      try {
-        const plugins = JSON.parse(fs.readFileSync(pluginsJsonPath, "utf-8"));
-        for (const plugin of plugins) {
-          if (plugin.url && plugin.enabled !== false && plugin.type !== "npm") {
-            const branch = plugin.branch || null;
-            const commit = plugin.commit || null;
-            updatePlugin(plugin.name, plugin.url, branch, commit);
-            deployToExecutionDir(plugin.name, pluginsDir);
-          }
-        }
-      } catch (e) {
-        writeLog(`Failed to parse plugins.json: ${e.message}`, true);
-      }
-    }
+  if (input && input.action === "updatePlugin") {
+    EARLY_LAUNCH_CONFIG_DIR = input.configDir;
+    writeLog(Direct update request for  + input.pluginName);
+    const updateResult = updatePlugin(input.pluginName, input.gitUrl, input.branch, input.commitHash);
+    deployToExecutionDir(input.pluginName, pluginsDir, updateResult.changed);
+    return;
   }
-
-  return {};
 }
 
-pluginUpdaterEntry.earlyLaunch = function(configDir) {
-  EARLY_LAUNCH_CONFIG_DIR = configDir;
-  global.__PLUGIN_UPDATER_HANDLED_BY_HUB__ = true;
-};
-pluginUpdaterEntry.updatePlugin = updatePlugin;
-pluginUpdaterEntry.deployToExecutionDir = deployToExecutionDir;
-pluginUpdaterEntry.rebuild = function(pluginName) {
-  const isClaude = process.argv.join(' ').includes('claude');
-  const configDir = getAppConfigDir(isClaude ? "claude" : "opencode");
-  deployToExecutionDir(pluginName, path.join(configDir, "plugin"));
-  return "Rebuilt " + pluginName;
-};
-pluginUpdaterEntry.downgrade = function(pluginName, commitHash) {
-  const reposDir = getReposDir();
-  const targetDir = path.join(reposDir, pluginName);
-  if (fs.existsSync(targetDir)) {
-    executeGit(`git fetch origin`, targetDir);
-    executeGit(`git checkout ${commitHash}`, targetDir);
-    executeGit(`git submodule update --init --recursive`, targetDir);
-    return pluginUpdaterEntry.rebuild(pluginName);
-  }
-  return "Repo not found";
-};
-pluginUpdaterEntry.disable = function(plugin) {
-  const isClaude = process.argv.join(' ').includes('claude');
-  const configDir = getAppConfigDir(isClaude ? "claude" : "opencode");
-  const pluginsJsonPath = path.join(configDir, "config", "plugins.json");
-  if (fs.existsSync(pluginsJsonPath)) {
-    let plugins = JSON.parse(fs.readFileSync(pluginsJsonPath, "utf-8"));
-    const pluginIndex = plugins.findIndex(p => p.name === plugin.name);
-    if (pluginIndex >= 0) {
-      plugins[pluginIndex].enabled = false;
-      fs.writeFileSync(pluginsJsonPath, JSON.stringify(plugins, null, 2), "utf-8");
-    }
-  }
-  const pluginExecutionPath = path.join(configDir, "plugin", `${plugin.name}.js`);
-  if (fs.existsSync(pluginExecutionPath)) {
-    try { fs.rmSync(pluginExecutionPath, { force: true }); } catch (e) {}
-  }
-};
-pluginUpdaterEntry.uninstall = function(plugin) {
-  pluginUpdaterEntry.disable(plugin);
-  const targetDir = path.join(getReposDir(), plugin.name);
-  if (fs.existsSync(targetDir)) {
-    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch (e) {}
-  }
-};
+export function updatePluginPublic(pluginName, gitUrl, branch, commitHash) {
+    writeLog(Public API update call for  + pluginName);
+    const result = updatePlugin(pluginName, gitUrl, branch, commitHash);
+    deployToExecutionDir(pluginName, path.join(getAppConfigDir(process.argv.join(' ').includes('claude') ? 'claude' : 'opencode'), "plugin"), result.changed);
+}
 
-export default pluginUpdaterEntry;
+export function earlyLaunch(configDir, plugins) {
+    EARLY_LAUNCH_CONFIG_DIR = configDir;
+    writeLog("Starting earlyLaunch updater sequence");
+    
+    if (!plugins || !Array.isArray(plugins)) {
+        writeLog("No plugins provided to earlyLaunch", true);
+        return;
+    }
+
+    for (const plugin of plugins) {
+        if (!plugin.enabled) continue;
+        if (plugin.autoUpdate === false) continue;
+        if (!plugin.url) continue;
+
+        writeLog(Processing earlyLaunch for  + plugin.name);
+        try {
+            const updateResult = updatePlugin(plugin.name, plugin.url, plugin.branch, null);
+            deployToExecutionDir(plugin.name, path.join(configDir, "plugin"), updateResult.changed);
+        } catch (e) {
+            writeLog(Failed to process  + plugin.name + :  + e.message, true);
+        }
+    }
+}
+
+pluginUpdaterEntry(null);
