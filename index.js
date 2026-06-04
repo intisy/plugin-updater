@@ -49,10 +49,15 @@ function getReposDir() {
 function executeGit(command, cwd) {
   writeLog(`Executing git: ${command} in ${cwd}`);
   try {
-    execSync(command, { cwd, stdio: "ignore" });
+    execSync(command, { 
+      cwd, 
+      stdio: "pipe",
+      env: { ...process.env, GCM_INTERACTIVE: 'never', GIT_TERMINAL_PROMPT: '0' }
+    });
     return true;
   } catch (error) {
-    writeLog(`Git error in ${cwd}: ${error.message}`, true);
+    const stderr = error.stderr ? error.stderr.toString().trim() : '';
+    writeLog(`Git error in ${cwd}: ${error.message} | stderr: ${stderr}`, true);
     return false;
   }
 }
