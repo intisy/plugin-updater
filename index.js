@@ -4,6 +4,7 @@ import os from 'os';
 import { execSync } from 'child_process';
 
 let EARLY_LAUNCH_CONFIG_DIR = null;
+const START_TIME = new Date().toISOString().replace(/:/g, '-').split('.')[0];
 
 function getAppConfigDir(appName) {
   if (EARLY_LAUNCH_CONFIG_DIR) {
@@ -19,7 +20,6 @@ function writeLog(message, isError = false) {
   try {
     const date = new Date();
     const dateStr = date.toISOString().split('T')[0];
-    const timeStr = date.toISOString().replace(/:/g, '-').split('.')[0];
     const isClaude = process.argv.join(' ').includes('claude');
     const appName = isClaude ? "claude" : "opencode";
     const configDir = getAppConfigDir(appName);
@@ -29,7 +29,7 @@ function writeLog(message, isError = false) {
       fs.mkdirSync(logsDir, { recursive: true });
     }
 
-    const logFile = path.join(logsDir, `updater-${timeStr}.log`);
+    const logFile = path.join(logsDir, `updater-${START_TIME}.log`);
     const prefix = isError ? "[ERROR]" : "[INFO]";
     const logMsg = `[${date.toISOString()}] ${prefix} ${message}\n`;
 
