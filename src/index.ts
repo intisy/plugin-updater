@@ -274,7 +274,21 @@ function updatePlugin(
   return { success: true, changed: didChange };
 }
 
-function deployToExecutionDir(pluginName: string, executionPath: string, changed: boolean): boolean {
+async function callPluginCleanup(pluginExecutionFile: string, configDir: string): Promise<void> {
+  if (!fs.existsSync(pluginExecutionFile)) return;
+  try {
+    const mod = await import(pluginExecutionFile);
+    if (typeof mod.cleanup === "function") {
+      writeLog(`Calling cleanup() on ${pluginExecutionFile}`);
+      await mod.cleanup(configDir);
+      writeLog(`cleanup() complete for ${pluginExecutionFile}`);
+    }
+  } catch (e: unknown) {
+    writeLog(`cleanup() call failed for ${pluginExecutionFile}: ${(e as { message: string }).message}`, true);
+  }
+}
+
+async function deployToExecutionDir(pluginName: string, executionPath: string, changed: boolean, configDir: string): Promise<boolean> {
   const sourceDir = path.join(getReposDir(), pluginName);
   if (!fs.existsSync(sourceDir)) return false;
 
@@ -325,6 +339,8 @@ function deployToExecutionDir(pluginName: string, executionPath: string, changed
 
   if (!fs.existsSync(executionPath)) fs.mkdirSync(executionPath, { recursive: true });
 
+  await callPluginCleanup(pluginExecutionFile, configDir);
+
   try {
     writeLog(`Running copy for ${pluginName}`);
     fs.copyFileSync(deploySource, pluginExecutionFile);
@@ -348,23 +364,24 @@ async function pluginUpdaterEntry(input: PluginUpdaterInput | null): Promise<voi
     EARLY_LAUNCH_CONFIG_DIR = input.configDir;
     writeLog(`Direct update request for ${input.pluginName}`);
     const updateResult = updatePlugin(input.pluginName, input.gitUrl, input.branch, input.commitHash ?? null);
-    deployToExecutionDir(input.pluginName, pluginsDir, updateResult.changed);
+    await deployToExecutionDir(input.pluginName, pluginsDir, updateResult.changed, input.configDir);
   }
 }
 
-export function updatePluginPublic(
+export async function updatePluginPublic(
   pluginName: string,
   gitUrl: string,
   branch?: string,
   commitHash?: string
-): void {
+): Promise<void> {
   writeLog(`Public API update call for ${pluginName}`);
   const appName = process.argv.join(" ").includes("claude") ? "claude" : "opencode";
+  const configDir = getAppConfigDir(appName);
   const result = updatePlugin(pluginName, gitUrl, branch, commitHash ?? null);
-  deployToExecutionDir(pluginName, path.join(getAppConfigDir(appName), "plugin"), result.changed);
+  await deployToExecutionDir(pluginName, path.join(configDir, "plugin"), result.changed, configDir);
 }
 
-export function earlyLaunch(configDir: string, plugins: Plugin[]): void {
+export async function earlyLaunch(configDir: string, plugins: Plugin[]): Promise<void> {
   EARLY_LAUNCH_CONFIG_DIR = configDir;
   writeLog("Starting earlyLaunch updater sequence");
 
@@ -398,7 +415,7 @@ export function earlyLaunch(configDir: string, plugins: Plugin[]): void {
     writeLog(`Processing earlyLaunch for ${plugin.name}`);
     try {
       const updateResult = updatePlugin(plugin.name, plugin.url, plugin.branch, null, plugin.updateInterval ?? 1);
-      deployToExecutionDir(plugin.name, path.join(configDir, "plugin"), updateResult.changed);
+      await deployToExecutionDir(plugin.name, path.join(configDir, "plugin"), updateResult.changed, configDir);
     } catch (e: unknown) {
       const err = e as { message: string };
       writeLog(`Failed to process ${plugin.name}: ${err.message}`, true);
