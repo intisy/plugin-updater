@@ -423,4 +423,24 @@ export async function earlyLaunch(configDir: string, plugins: Plugin[]): Promise
   }
 }
 
-pluginUpdaterEntry(null);
+export async function activate(): Promise<void> {
+  const isClaude = process.argv.join(" ").includes("claude");
+  const appName = isClaude ? "claude" : "opencode";
+  const configDir = getAppConfigDir(appName);
+  writeLog(`Plugin updater activating for ${appName}`);
+
+  const pluginsJsonPath = path.join(configDir, "config", "plugins.json");
+  let gitPlugins: Plugin[] = [];
+  if (fs.existsSync(pluginsJsonPath)) {
+    try {
+      gitPlugins = JSON.parse(fs.readFileSync(pluginsJsonPath, "utf-8"));
+      writeLog(`Found ${gitPlugins.length} git plugins in plugins.json`);
+    } catch (e: unknown) {
+      writeLog(`Failed to parse plugins.json: ${(e as { message: string }).message}`, true);
+    }
+  }
+
+  await earlyLaunch(configDir, gitPlugins);
+}
+
+activate();
