@@ -142,7 +142,15 @@ function writeOpencodeJson(configDir: string, data: Record<string, unknown>): vo
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// opencode invokes every exported function as a plugin hook, passing a context
+// object instead of our protocol arguments; exports detect that and return an
+// inert value so opencode gets a valid (empty) plugin instance
+function isOpencodeHookInvocation(firstArgument: unknown): boolean {
+  return typeof firstArgument !== "string";
+}
+
 export function getNpmPlugins(configDir: string): NpmPlugin[] {
+  if (isOpencodeHookInvocation(configDir)) return [];
   const { plugins } = readOpencodeJson(configDir);
   return plugins.map((raw) => {
     const name = raw.replace(/@[^@/]+$/, "") || raw;
@@ -152,6 +160,7 @@ export function getNpmPlugins(configDir: string): NpmPlugin[] {
 }
 
 export function installNpmPlugin(name: string, configDir: string): string {
+  if (isOpencodeHookInvocation(name)) return "";
   writeLog(`Installing npm plugin: ${name}`);
   try {
     const { plugins, raw } = readOpencodeJson(configDir);
@@ -170,6 +179,7 @@ export function installNpmPlugin(name: string, configDir: string): string {
 }
 
 export function uninstallNpmPlugin(name: string, configDir: string): string {
+  if (isOpencodeHookInvocation(name)) return "";
   writeLog(`Uninstalling npm plugin: ${name}`);
   try {
     const { plugins, raw } = readOpencodeJson(configDir);
@@ -189,6 +199,7 @@ export function uninstallNpmPlugin(name: string, configDir: string): string {
 }
 
 export function updateNpmPlugin(name: string, configDir: string, updateInterval = 1): string {
+  if (isOpencodeHookInvocation(name)) return "";
   writeLog(`Updating npm plugin: ${name}`);
   const checkFile = path.join(configDir, "cache", `.npm-lastcheck-${name.replace(/[^a-z0-9]/gi, "_")}`);
   try {
@@ -377,7 +388,8 @@ export async function updatePluginPublic(
   gitUrl: string,
   branch?: string,
   commitHash?: string
-): Promise<void> {
+): Promise<void | object> {
+  if (isOpencodeHookInvocation(pluginName)) return {};
   writeLog(`Public API update call for ${pluginName}`);
   const appName = process.argv.join(" ").includes("claude") ? "claude" : "opencode";
   const configDir = getAppConfigDir(appName);
@@ -385,7 +397,8 @@ export async function updatePluginPublic(
   await deployToExecutionDir(pluginName, path.join(configDir, "plugin"), result.changed, configDir);
 }
 
-export async function earlyLaunch(configDir: string, plugins: Plugin[]): Promise<void> {
+export async function earlyLaunch(configDir: string, plugins: Plugin[]): Promise<void | object> {
+  if (isOpencodeHookInvocation(configDir)) return {};
   EARLY_LAUNCH_CONFIG_DIR = configDir;
   writeLog("Starting earlyLaunch updater sequence");
 
@@ -427,7 +440,10 @@ export async function earlyLaunch(configDir: string, plugins: Plugin[]): Promise
   }
 }
 
-export async function activate(): Promise<void> {
+export async function activate(opencodeHookInput?: unknown): Promise<void | object> {
+  // module load below calls activate() with no argument; opencode passes a
+  // context object when re-invoking the export — return an inert plugin instance
+  if (opencodeHookInput !== undefined) return {};
   const isClaude = process.argv.join(" ").includes("claude");
   const appName = isClaude ? "claude" : "opencode";
   const configDir = getAppConfigDir(appName);
