@@ -76,6 +76,8 @@ function writeLog(message: string, isError = false): void {
   else if (loggingEnabled) console.log(message);
 }
 
+let NPM_GLOBAL_ROOT: string | null = null;
+
 function getReposDir(): string {
   const isClaude = process.argv.join(" ").includes("claude");
   const appName = isClaude ? "claude" : "opencode";
@@ -99,17 +101,25 @@ function executeGit(command: string, cwd: string): boolean {
   }
 }
 
+function getNpmGlobalRoot(): string {
+  if (NPM_GLOBAL_ROOT !== null) return NPM_GLOBAL_ROOT;
+  try {
+    NPM_GLOBAL_ROOT = execSync("npm root -g", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    NPM_GLOBAL_ROOT = "";
+  }
+  return NPM_GLOBAL_ROOT;
+}
+
 function resolveNpmPluginVersion(name: string, configDir: string): string {
   try {
     const cacheDir = path.join(configDir, "cache", "node_modules");
-    const globalNpm = process.platform === "win32"
-      ? path.join(os.homedir(), "AppData", "Roaming", "npm", "node_modules")
-      : path.join("/usr", "lib", "node_modules");
+    const globalNpm = getNpmGlobalRoot();
     const candidates = [
       path.join(cacheDir, name, "package.json"),
       path.join(configDir, "node_modules", name, "package.json"),
-      path.join(globalNpm, name, "package.json"),
-    ];
+      globalNpm ? path.join(globalNpm, name, "package.json") : "",
+    ].filter((p) => p !== "");
     for (const p of candidates) {
       if (fs.existsSync(p)) {
         return JSON.parse(fs.readFileSync(p, "utf8")).version || "";
