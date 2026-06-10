@@ -299,6 +299,45 @@ async function callPluginCleanup(pluginExecutionFile: string, configDir: string)
   }
 }
 
+const BUILD_OUTPUT_DIRS = ["dist", path.join("core", "dist")];
+
+// npm install creates node_modules/.bin symlinks, which fail on filesystems
+// without symlink support (e.g. Windows-backed Docker bind mounts) — build in
+// the OS temp dir and copy the outputs back instead
+function buildInTempDir(pluginName: string, sourceDir: string): void {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `plugin-updater-${pluginName}-`));
+  try {
+    fs.cpSync(sourceDir, tempDir, {
+      recursive: true,
+      filter: (src) => {
+        const name = path.basename(src);
+        return name !== ".git" && name !== "node_modules";
+      },
+    });
+
+    writeLog(`Running npm install for ${pluginName}`);
+    execSync("npm install", { cwd: tempDir, stdio: "pipe" });
+    writeLog(`Finished npm install for ${pluginName}`);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(tempDir, "package.json"), "utf8")) as { scripts?: { build?: string } };
+    if (pkg.scripts?.build) {
+      execSync("npm run build", { cwd: tempDir, stdio: "pipe" });
+      writeLog(`Finished npm run build for ${pluginName}`);
+    } else {
+      writeLog(`Skipped npm run build for ${pluginName} (no build script found)`);
+    }
+
+    for (const outputDir of BUILD_OUTPUT_DIRS) {
+      const builtDir = path.join(tempDir, outputDir);
+      if (fs.existsSync(builtDir)) {
+        fs.cpSync(builtDir, path.join(sourceDir, outputDir), { recursive: true });
+      }
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function deployToExecutionDir(pluginName: string, executionPath: string, changed: boolean, configDir: string): Promise<boolean> {
   const sourceDir = path.join(getReposDir(), pluginName);
   if (!fs.existsSync(sourceDir)) return false;
@@ -312,19 +351,7 @@ async function deployToExecutionDir(pluginName: string, executionPath: string, c
   } else {
     if (fs.existsSync(packageJsonPath)) {
       try {
-        writeLog(`Running npm install for ${pluginName}`);
-        execSync("npm install", { cwd: sourceDir, stdio: "pipe" });
-        writeLog(`Finished npm install for ${pluginName}`);
-
-        const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { main?: string; scripts?: { build?: string } };
-        if (pkg.main) entryFile = pkg.main;
-
-        if (pkg.scripts?.build) {
-          execSync("npm run build", { cwd: sourceDir, stdio: "pipe" });
-          writeLog(`Finished npm run build for ${pluginName}`);
-        } else {
-          writeLog(`Skipped npm run build for ${pluginName} (no build script found)`);
-        }
+        buildInTempDir(pluginName, sourceDir);
       } catch (error: unknown) {
         const err = error as { message: string; stderr?: Buffer; stdout?: Buffer };
         const stderr = err.stderr ? err.stderr.toString().trim() : "";
