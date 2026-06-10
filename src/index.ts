@@ -294,10 +294,22 @@ function updatePlugin(
       executeGit(`git checkout ${branch}`, targetDir);
       executeGit(`git pull --ff-only origin ${branch}`, targetDir);
     } else {
+      // the updater owns repos/: hard-sync to the remote so force-pushed
+      // branches and rewritten submodule history cannot strand the clone
+      executeGit("git fetch origin", targetDir);
       executeGit("git checkout main || git checkout master", targetDir);
-      executeGit("git pull --ff-only", targetDir);
+      executeGit("git reset --hard @{upstream}", targetDir);
     }
-    executeGit("git submodule update --init --recursive", targetDir);
+    executeGit("git submodule sync --recursive", targetDir);
+    const submodulesOk = executeGit("git submodule update --init --recursive --force", targetDir);
+    if (!submodulesOk) {
+      writeLog(`Submodule sync failed for ${pluginName}, recloning`, true);
+      try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      const recloneBranchFlag = branch ? `--branch ${branch}` : "";
+      executeGit(`git clone --recurse-submodules ${recloneBranchFlag} ${gitUrl} ${pluginName}`, reposDir);
+      fs.writeFileSync(lastCheckFile, Date.now().toString());
+      didChange = true;
+    }
 
     let afterHash = "";
     try { afterHash = execSync("git rev-parse HEAD", { cwd: targetDir }).toString().trim(); } catch { /* ignore */ }
@@ -442,7 +454,8 @@ export async function updatePluginPublic(
   writeLog(`Public API update call for ${pluginName}`);
   const appName = process.argv.join(" ").includes("claude") ? "claude" : "opencode";
   const configDir = getAppConfigDir(appName);
-  const result = updatePlugin(pluginName, gitUrl, branch, commitHash ?? null);
+  // interval 0: an explicit update request must never fast-path-skip
+  const result = updatePlugin(pluginName, gitUrl, branch, commitHash ?? null, 0);
   await deployToExecutionDir(pluginName, path.join(configDir, "plugin"), result.changed, configDir);
 }
 
