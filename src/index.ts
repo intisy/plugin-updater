@@ -302,21 +302,25 @@ async function deployToExecutionDir(pluginName: string, executionPath: string, c
     if (fs.existsSync(packageJsonPath)) {
       try {
         writeLog(`Running npm install for ${pluginName}`);
-        execSync("npm install", { cwd: sourceDir, stdio: "ignore" });
+        execSync("npm install", { cwd: sourceDir, stdio: "pipe" });
         writeLog(`Finished npm install for ${pluginName}`);
 
         const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { main?: string; scripts?: { build?: string } };
         if (pkg.main) entryFile = pkg.main;
 
         if (pkg.scripts?.build) {
-          execSync("npm run build", { cwd: sourceDir, stdio: "ignore" });
+          execSync("npm run build", { cwd: sourceDir, stdio: "pipe" });
           writeLog(`Finished npm run build for ${pluginName}`);
         } else {
           writeLog(`Skipped npm run build for ${pluginName} (no build script found)`);
         }
       } catch (error: unknown) {
-        const err = error as { message: string };
+        const err = error as { message: string; stderr?: Buffer; stdout?: Buffer };
+        const stderr = err.stderr ? err.stderr.toString().trim() : "";
+        const stdout = err.stdout ? err.stdout.toString().trim() : "";
         writeLog(`Build/Install failed for ${pluginName}: ${err.message}`, true);
+        if (stderr) writeLog(`npm stderr: ${stderr}`, true);
+        if (stdout) writeLog(`npm stdout: ${stdout}`, true);
       }
     }
   }
