@@ -72,6 +72,7 @@ function writeLog(message: string, isError = false): void {
       fs.appendFileSync(logFile, `[${date.toISOString()}] ${prefix} ${message}\n`);
     }
   } catch { /* never crash on log failure */ }
+  if (process.env.PLUGIN_UPDATER_LIBRARY_MODE === "1") return;
   if (isError) console.error(message);
   else if (loggingEnabled) console.log(message);
 }
@@ -511,4 +512,6 @@ export async function activate(opencodeHookInput?: unknown): Promise<void | obje
   await earlyLaunch(configDir, gitPlugins);
 }
 
-activate();
+// consumers like the loader TUI import this module for its API only — running
+// the full updater sequence on import would print over their screen
+if (process.env.PLUGIN_UPDATER_LIBRARY_MODE !== "1") activate();
