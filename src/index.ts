@@ -443,7 +443,14 @@ async function deployToExecutionDir(pluginName: string, executionPath: string, c
       const deployed = await import(pluginExecutionFile);
       if (typeof deployed.activate === "function") {
         writeLog(`Activating ${pluginName}`);
-        await deployed.activate();
+        // tells the plugin the updater is the caller, so it must not start
+        // another earlyLaunch and recurse back into the updater
+        process.env.PLUGIN_UPDATER_ACTIVATION = "1";
+        try {
+          await deployed.activate();
+        } finally {
+          delete process.env.PLUGIN_UPDATER_ACTIVATION;
+        }
         writeLog(`Activated ${pluginName}`);
       }
     } catch (e: unknown) {
