@@ -23,15 +23,27 @@ function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
+function binaryExists(name: string): boolean {
+  try {
+    const probe = process.platform === "win32" ? `where ${name}` : `command -v ${name}`;
+    require("child_process").execSync(probe, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function detectApp(explicit?: string): string {
   if (explicit === "claude" || explicit === "opencode") return explicit;
   if (explicit) throw new Error(`Unknown app "${explicit}" - use claude or opencode`);
-  const hasClaude = fs.existsSync(path.join(os.homedir(), ".claude"));
-  const hasOpencode = fs.existsSync(path.join(os.homedir(), ".opencode"))
+  const hasClaudeDir = fs.existsSync(path.join(os.homedir(), ".claude"));
+  const hasOpencodeDir = fs.existsSync(path.join(os.homedir(), ".opencode"))
     || fs.existsSync(path.join(os.homedir(), ".config", "opencode"));
-  if (hasClaude && !hasOpencode) return "claude";
-  if (hasOpencode && !hasClaude) return "opencode";
-  throw new Error("Cannot detect the app automatically - pass --app claude or --app opencode");
+  if (hasClaudeDir !== hasOpencodeDir) return hasClaudeDir ? "claude" : "opencode";
+  const hasClaudeBin = binaryExists("claude");
+  const hasOpencodeBin = binaryExists("opencode");
+  if (hasClaudeBin !== hasOpencodeBin) return hasClaudeBin ? "claude" : "opencode";
+  throw new Error("Both apps (or neither) found - pass --app claude or --app opencode");
 }
 
 function getConfigDir(app: string): string {
@@ -64,8 +76,9 @@ function registerClaudeHook(configDir: string): void {
   const settings = (fs.existsSync(settingsPath) ? readJson(settingsPath) : {}) ?? {};
   const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
   const sessionStart = (hooks.SessionStart ?? []) as unknown[];
-  if (!JSON.stringify(sessionStart).includes("plugin-updater run")) {
-    sessionStart.push({ hooks: [{ type: "command", command: "npx -y plugin-updater run --app claude" }] });
+  if (!JSON.stringify(sessionStart).includes("plugin-updater")) {
+    // @latest so npx re-resolves the tag instead of pinning its first cached copy
+    sessionStart.push({ hooks: [{ type: "command", command: "npx -y plugin-updater@latest run --app claude" }] });
   }
   hooks.SessionStart = sessionStart;
   settings.hooks = hooks;
@@ -104,6 +117,28 @@ function addPluginEntry(configDir: string, url: string, branch?: string): { name
   return { name, url: cleanUrl, branch };
 }
 
+function removePluginEntry(configDir: string, name: string): void {
+  const file = pluginsJsonPath(configDir);
+  const entries = (readJson(file) as unknown as Array<Record<string, unknown>>) ?? [];
+  fs.writeFileSync(file, JSON.stringify(entries.filter((e) => e.name !== name), null, 2), "utf8");
+}
+
+async function setupEntry(
+  updater: { updatePluginPublic: (name: string, url: string, branch?: string) => Promise<unknown> },
+  configDir: string,
+  url: string,
+  branch?: string
+): Promise<void> {
+  const entry = addPluginEntry(configDir, url, branch);
+  console.log(`Setting up ${entry.name}...`);
+  try {
+    await updater.updatePluginPublic(entry.name, entry.url, entry.branch);
+  } catch (e) {
+    removePluginEntry(configDir, entry.name);
+    throw e;
+  }
+}
+
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   if (!["init", "add", "run"].includes(parsed.command)) {
@@ -124,17 +159,13 @@ async function main(): Promise<void> {
     if (app === "claude") registerClaudeHook(configDir);
     else registerOpencodePlugin(configDir);
     for (const url of parsed.urls) {
-      const entry = addPluginEntry(configDir, url, parsed.branch);
-      console.log(`Setting up ${entry.name}...`);
-      await updater.updatePluginPublic(entry.name, entry.url, entry.branch);
+      await setupEntry(updater, configDir, url, parsed.branch);
     }
     console.log("Init complete.");
   } else if (parsed.command === "add") {
     if (parsed.urls.length === 0) throw new Error("add requires at least one git url");
     for (const url of parsed.urls) {
-      const entry = addPluginEntry(configDir, url, parsed.branch);
-      console.log(`Setting up ${entry.name}...`);
-      await updater.updatePluginPublic(entry.name, entry.url, entry.branch);
+      await setupEntry(updater, configDir, url, parsed.branch);
     }
   } else {
     const entries = (readJson(pluginsJsonPath(configDir)) as unknown as Array<Record<string, unknown>>) ?? [];
