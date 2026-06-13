@@ -52,6 +52,21 @@ export function updatePlugin(
 
     if (elapsed < intervalMs) {
       writeLog(`Fast-path: ${pluginName} skipping update check (checked ${Math.floor(elapsed / 60_000)} min ago, interval ${updateInterval}h)`);
+      // even when skipping the network check, keep embedded submodules pinned to
+      // this checkout — a loader running against a stale core/core-auth is the
+      // top cause of "looks broken but it's just stale". Rebuild if they moved.
+      if (fs.existsSync(path.join(targetDir, ".gitmodules"))) {
+        let before = "";
+        try { before = execSync("git submodule status --recursive", { cwd: targetDir }).toString(); } catch { /* ignore */ }
+        executeGit("git submodule sync --recursive", targetDir);
+        executeGit("git submodule update --init --recursive", targetDir);
+        let after = "";
+        try { after = execSync("git submodule status --recursive", { cwd: targetDir }).toString(); } catch { /* ignore */ }
+        if (before !== after) {
+          writeLog(`Fast-path: ${pluginName} submodules were out of sync — resynced, forcing rebuild`);
+          return { success: true, changed: true };
+        }
+      }
       return { success: true, changed: false };
     }
 
