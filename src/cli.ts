@@ -141,8 +141,8 @@ async function setupEntry(
 
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
-  if (!["init", "add", "run"].includes(parsed.command)) {
-    console.log("usage: plugin-updater <init|add|run> [git-urls...] [--app claude|opencode] [--branch name]");
+  if (!["init", "add", "run", "remove"].includes(parsed.command)) {
+    console.log("usage: plugin-updater <init|add|remove|run> [git-urls-or-names...] [--app claude|opencode] [--branch name]");
     process.exit(parsed.command ? 1 : 0);
   }
 
@@ -166,6 +166,15 @@ async function main(): Promise<void> {
     if (parsed.urls.length === 0) throw new Error("add requires at least one git url");
     for (const url of parsed.urls) {
       await setupEntry(updater, configDir, url, parsed.branch);
+    }
+  } else if (parsed.command === "remove") {
+    if (parsed.urls.length === 0) throw new Error("remove requires at least one plugin name");
+    for (const arg of parsed.urls) {
+      const name = arg.replace(/\.git$/, "").split("/").pop() ?? arg;
+      removePluginEntry(configDir, name);
+      try { fs.rmSync(path.join(configDir, "repos", name), { recursive: true, force: true }); } catch { /* ignore */ }
+      try { fs.rmSync(path.join(configDir, "plugin", `${name}.js`), { force: true }); } catch { /* ignore */ }
+      console.log(`Removed ${name}`);
     }
   } else {
     const entries = (readJson(pluginsJsonPath(configDir)) as unknown as Array<Record<string, unknown>>) ?? [];

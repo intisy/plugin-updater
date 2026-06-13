@@ -5,7 +5,29 @@ import { selfUpdate, updateNpmPlugin } from "./npm.js";
 import { updatePlugin } from "./git.js";
 import { deployToExecutionDir } from "./deploy.js";
 import path from "path";
+import fs from "fs";
 import type { Plugin } from "./types.js";
+
+// remove repos/ clones and deployed plugin/ files for plugins no longer in
+// plugins.json, so a removed/renamed plugin stops showing up
+function pruneOrphans(configDir: string, plugins: Plugin[]): void {
+  const keep = new Set(plugins.map((p) => p.name));
+  try {
+    for (const dir of fs.readdirSync(path.join(configDir, "repos"))) {
+      if (!keep.has(dir)) {
+        try { fs.rmSync(path.join(configDir, "repos", dir), { recursive: true, force: true }); writeLog(`Pruned orphaned repos/${dir}`); } catch { /* ignore */ }
+      }
+    }
+  } catch { /* no repos dir */ }
+  try {
+    for (const file of fs.readdirSync(path.join(configDir, "plugin"))) {
+      if (!file.endsWith(".js")) continue;
+      if (!keep.has(file.slice(0, -3))) {
+        try { fs.unlinkSync(path.join(configDir, "plugin", file)); writeLog(`Pruned orphaned plugin/${file}`); } catch { /* ignore */ }
+      }
+    }
+  } catch { /* no plugin dir */ }
+}
 
 // re-exported public API (consumers import these from "plugin-updater")
 export { getNpmPlugins, installNpmPlugin, uninstallNpmPlugin, updateNpmPlugin } from "./npm.js";
@@ -69,6 +91,8 @@ export async function earlyLaunch(configDir: string, plugins: Plugin[]): Promise
       writeLog(`Failed to process ${plugin.name}: ${(e as { message: string }).message}`, true);
     }
   }
+
+  if (plugins.length > 0) pruneOrphans(configDir, plugins);
 }
 
 export async function activate(opencodeHookInput?: unknown): Promise<void | object> {
